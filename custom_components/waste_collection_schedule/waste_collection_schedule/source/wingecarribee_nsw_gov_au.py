@@ -3,7 +3,11 @@ from datetime import datetime, timedelta, timezone
 import requests
 from waste_collection_schedule import Collection, Icons
 from waste_collection_schedule.exceptions import SourceArgumentNotFound
-from waste_collection_schedule.service.ArcGis import ArcGisError, geocode
+from waste_collection_schedule.service.ArcGis import (
+    ArcGisError,
+    ArcGisQueryError,
+    geocode,
+)
 
 TITLE = "Wingecarribee Shire Council"
 DESCRIPTION = "Source for Wingecarribee Shire Council (NSW) waste collection."
@@ -74,16 +78,22 @@ class Source:
 
         for layer_id in range(1, 11):
             url = f"{ZONE_SERVICE_URL}/{layer_id}/query"
-            try:
-                r = requests.get(url, params=base_params, headers=HEADERS, timeout=20)
-                r.raise_for_status()
-                data = r.json()
-                features = data.get("features", [])
-                if features:
-                    attrs = features[0].get("attributes", {})
-                    return self._build_schedule(attrs)
-            except requests.RequestException:
-                continue
+            r = requests.get(url, params=base_params, headers=HEADERS, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+            if error := data.get("error"):
+                code = error.get("code")
+                message = error.get("message", "Unknown ArcGIS error")
+                details = "; ".join(str(d) for d in (error.get("details") or []) if d)
+                code_str = f" {code}" if code is not None else ""
+                detail_str = f": {details}" if details else ""
+                raise ArcGisQueryError(
+                    f"ArcGIS service error{code_str} ({message}){detail_str}"
+                )
+            features = data.get("features", [])
+            if features:
+                attrs = features[0].get("attributes", {})
+                return self._build_schedule(attrs)
 
         raise SourceArgumentNotFound("address", self._address)
 
